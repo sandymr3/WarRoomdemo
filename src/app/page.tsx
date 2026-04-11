@@ -1,426 +1,826 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  type DemoStage, type DemoScenario, type DemoScenarioOption,
+  type DemoFollowupScenario, type DemoEvaluation,
+  type DemoVoiceEvaluation, type RoundResult, API_BASE,
+} from "./data";
 
-const SCENARIOS = [
-  {
-    title: "Crisis Management",
-    tagline: "Respond to an active customer escalation",
-    icon: "!",
-    color: "red",
-    intro: "A major enterprise client (15% of MRR) is threatening to churn because of performance issues causing a 2-hour downtime yesterday. The CEO is on the phone right now demanding answers.",
-    choices: [
-      { text: "Offer a 20% discount and apologize profusely.", outcome: "They take the discount but remain skeptical. Your MRR takes a hit, and they start exploring competitors anyway." },
-      { text: "Commit to a 2-week dedicated engineering sprint to fix their specific issues.", outcome: "They agree to stay and monitor your progress. Your team velocity for new features drops to zero for two weeks." },
-      { text: "Tell them we are upgrading infrastructure and suggest they downgrade to a cheaper, more stable tier.", outcome: "They form a bad opinion, feel insulted, and churn immediately. You lose a major logo." },
-    ]
-  },
-  {
-    title: "Team Conflict",
-    tagline: "Resolve internal disputes",
-    icon: "??",
-    color: "blue",
-    intro: "Your Co-Founder and CTO is refusing to build a highly-requested feature because they believe it comprises technical debt, but Sales says it is blocking 3 huge deals.",
-    choices: [
-      { text: "Side with Sales. Force the CTO to build it now and fix technical debt later.", outcome: "Deals close, but the CTO writes spaghetti code out of spite and begins looking for another job." },
-      { text: "Side with the CTO. Tell Sales to sell the product as is.", outcome: "Sales loses the deals. Morale in the sales team plummets, but the platform remains stable." },
-      { text: "Compromise: Build a v1 'hacky' version just for these clients, and schedule technical debt cleanup for next quarter.", outcome: "Deals close, the CTO is annoyed but complies. The technical debt cleanup is never actually prioritized." },
-    ]
-  },
-  {
-    title: "Marketing Misstep",
-    tagline: "Handling public relations",
-    icon: "??",
-    color: "fuchsia",
-    intro: "A junior marketer tweeted an insensitive joke from the company account. It went semi-viral (300 retweets) before being deleted. A small group of users is demanding a statement.",
-    choices: [
-      { text: "Issue a formal, corporate apology from the CEO.", outcome: "It looks robotic but appeases most people. A few users still complain, but it blows over in a week." },
-      { text: "Ignore it. Don't draw more attention to a deleted tweet.", outcome: "A competitor screenshots it and runs an ad campaign against you. It becomes a bigger issue." },
-      { text: "Fire the junior marketer publicly to show you are serious.", outcome: "The internet turns on you for being a ruthless boss over a minor mistake. Massive PR backlash." },
-    ]
-  },
-  {
-    title: "Product Pivot",
-    tagline: "Strategic direction shift",
-    icon: "??",
-    color: "teal",
-    intro: "You've spent 6 months building an AI summarization tool, but OpenAI just released the exact same feature for free. Your runway is 8 months.",
-    choices: [
-      { text: "Pivot immediately to a niche vertical (e.g., Legal summaries only).", outcome: "You scramble to find lawyers. You secure 2 pilots, but runway drops to 6 months during the pivot." },
-      { text: "Stay the course and compete on UI/UX and customer service.", outcome: "Growth stalls completely. You burn through 4 months of runway with zero new signups." },
-      { text: "Shut down the project and return the remaining capital to investors.", outcome: "Investors respect your honesty, but your startup journey ends here for now." },
-    ]
-  }
-];
+// ============================================
+// API HELPERS
+// ============================================
+async function apiGenerateScenario(introduction: string, roundNumber: number, previousScenarios: string): Promise<DemoScenario> {
+  const res = await fetch(`${API_BASE}/demo/generate-scenario`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ introduction, roundNumber, previousScenarios }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to generate scenario'); }
+  return res.json();
+}
 
-const INVESTOR_NEGOTIATION = {
-  intro: "Investor (Shark-style avatar): 'I like the team, and you handled those operational challenges reasonably well. I'll offer $1M for 20% equity.'",
-  choices: [
-    { text: "Accept the offer immediately.", outcome: "Deal closed at a $5M valuation. You get the cash but gave up a huge chunk of your company early on." },
-    { text: "Counter: $1.5M for 15% equity.", outcome: "Investor: 'Ouch, that's steep. I can do $1.5M for 18%.' (Deal closed at $8.3M valuation). Great negotiation!" },
-    { text: "Walk away. We don't need predatory terms.", outcome: "You walk away without funding. You retain equity but have to bootstrap through a very tough year." }
-  ]
-};
+async function apiGenerateFollowup(
+  introduction: string, originalQuestion: string,
+  selectedOptionText: string, selectedOptionFeedback: string, roundNumber: number
+): Promise<DemoFollowupScenario> {
+  const res = await fetch(`${API_BASE}/demo/generate-followup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ introduction, originalQuestion, selectedOptionText, selectedOptionFeedback, roundNumber }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to generate follow-up'); }
+  return res.json();
+}
 
-const TOTAL_STEPS = SCENARIOS.length + 2; // Scenarios + Pitch + Negotiation
+async function apiEvaluateText(introduction: string, question: string, response: string): Promise<DemoEvaluation> {
+  const res = await fetch(`${API_BASE}/demo/evaluate-response`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ introduction, question, response }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to evaluate response'); }
+  return res.json();
+}
 
-const StepIndicator = ({ currentStep }: { currentStep: number }) => {
+async function apiEvaluateVoice(introduction: string, question: string, audio: Blob): Promise<DemoVoiceEvaluation> {
+  const fd = new FormData();
+  fd.append('introduction', introduction);
+  fd.append('question', question);
+  fd.append('audio', audio, 'response.webm');
+  const res = await fetch(`${API_BASE}/demo/evaluate-voice`, { method: 'POST', body: fd });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to evaluate voice'); }
+  return res.json();
+}
+
+// ============================================
+// SHARED UI
+// ============================================
+function PhaseHeader({ icon, tag, title, subtitle }: { icon: string; tag: string; title: string; subtitle?: string }) {
   return (
-    <div className="flex items-center justify-center space-x-2 mb-8 hidden md:flex">
-      {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((step) => (
-        <div key={step} className="flex items-center">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all duration-500 ${
-            currentStep === step ? "bg-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.5)]" :
-            currentStep > step ? "bg-green-500 text-white" : "bg-slate-200 text-slate-400"
-          }`}>
-            {currentStep > step ? "?" : step}
-          </div>
-          {step < TOTAL_STEPS && (
-            <div className={`w-8 lg:w-12 h-1 transition-all duration-500 ${currentStep > step ? "bg-green-500" : "bg-slate-200"}`} />
-          )}
-        </div>
-      ))}
+    <div className="animate-fade-in-up mb-8">
+      {tag && <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-widest uppercase mb-4" style={{ background: 'rgba(124,58,237,0.15)', color: '#a78bfa', border: '1px solid rgba(124,58,237,0.2)' }}>
+        <span>{icon}</span> {tag}
+      </div>}
+      <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2">{title}</h2>
+      {subtitle && <p className="text-base text-gray-400 max-w-2xl">{subtitle}</p>}
+    </div>
+  );
+}
+
+function NextButton({ onClick, disabled, label, loading }: { onClick: () => void; disabled?: boolean; label?: string; loading?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled || loading}
+      className="mt-6 px-8 py-3.5 rounded-xl font-semibold text-white transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2 justify-center"
+      style={{ background: (disabled || loading) ? '#333' : 'linear-gradient(135deg, #7c3aed, #f59e0b)' }}>
+      {loading && <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+      {label || 'Continue →'}
+    </button>
+  );
+}
+
+function ScoreBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-gray-400 w-24 shrink-0">{label}</span>
+      <div className="flex-1 h-2.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-2.5 rounded-full transition-all duration-1000" style={{ width: `${(value / max) * 100}%`, background: color }} />
+      </div>
+      <span className="text-xs font-mono font-bold w-10 text-right" style={{ color }}>{value}/{max}</span>
+    </div>
+  );
+}
+
+// ============================================
+// PROGRESS
+// ============================================
+const TOTAL_ROUNDS = 3;
+
+const StageProgressBar = ({ round, total }: { round: number; total: number }) => {
+  const pct = Math.round((round / total) * 100);
+  return (
+    <div className="progress-bar w-full">
+      <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
     </div>
   );
 };
 
+// ============================================
+// MAIN
+// ============================================
 export default function DemoPage() {
-  const [step, setStep] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(15 * 60);
-  const [isRecording, setIsRecording] = useState(false);
-  const [pitchRecorded, setPitchRecorded] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  
-  // Store results
-  const [scenarioResults, setScenarioResults] = useState<string[]>(Array(SCENARIOS.length).fill(""));
-  const [investorResult, setInvestorResult] = useState("");
+  const [stage, setStage] = useState<DemoStage>('WELCOME');
+  const [introduction, setIntroduction] = useState('');
+  const [currentRound, setCurrentRound] = useState(1);
+  const [scenario, setScenario] = useState<DemoScenario | null>(null);
+  const [selectedOption, setSelectedOption] = useState<DemoScenarioOption | null>(null);
+  const [followupScenario, setFollowupScenario] = useState<DemoFollowupScenario | null>(null);
+  const [userResponse, setUserResponse] = useState('');
+  const [responseMode, setResponseMode] = useState<'text' | 'voice'>('text');
+  const [results, setResults] = useState<RoundResult[]>([]);
+  const [currentEval, setCurrentEval] = useState<DemoEvaluation | DemoVoiceEvaluation | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
+  // Voice recording
+  const [recording, setRecording] = useState(false);
+  const [recTime, setRecTime] = useState(0);
+  const [transcript, setTranscript] = useState('');
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
+
+  // Recording timer
   useEffect(() => {
-    const timer = setInterval(() => {
-      if (step > 0 && step < TOTAL_STEPS + 1) {
-        setTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
+    if (!recording) return;
+    const iv = setInterval(() => setRecTime(p => p + 1), 1000);
+    return () => clearInterval(iv);
+  }, [recording]);
+
+  // Init speech recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SR && !recognitionRef.current) {
+        recognitionRef.current = new SR();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
       }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [step]);
-
-  useEffect(() => {
-    let recTimer: NodeJS.Timeout;
-    if (isRecording) {
-      recTimer = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
     }
-    return () => clearInterval(recTimer);
-  }, [isRecording]);
+  }, []);
 
-  const handleStartRecording = () => {
-    setRecordingTime(0);
-    setIsRecording(true);
-    setTimeout(() => {
-      setIsRecording(false);
-      setPitchRecorded(true);
-    }, 5000);
-  };
-
-  const handleScenarioChoice = (scenarioIndex: number, outcome: string) => {
-    const newResults = [...scenarioResults];
-    newResults[scenarioIndex] = outcome;
-    setScenarioResults(newResults);
-  };
-
-  const currentStepView = () => {
-    if (step === 0) {
-      return (
-        <div className="flex flex-col items-center justify-center py-24 text-center max-w-3xl mx-auto">
-          <div className="mb-6 inline-flex items-center gap-2 bg-amber-500/10 text-amber-700 px-4 py-2 rounded-full text-sm font-medium border border-amber-500/20">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-            Extended Startup Simulation
-          </div>
-          <h1 className="text-5xl font-extrabold tracking-tight text-slate-900 sm:text-6xl mb-6">
-            Pitch to World-Class <br />
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-violet-600 to-amber-500">Virtual Investors</span>
-          </h1>
-          <p className="text-xl text-slate-600 mb-10 leading-relaxed">
-            Navigate 4 distinct startup crises under pressure, deliver your elevator pitch, and negotiate a term sheet in this fully extended 15-minute gauntlet.
-          </p>
-          <button 
-            onClick={() => setStep(1)} 
-            className="px-8 py-4 bg-gradient-to-r from-violet-600 to-amber-600 hover:from-violet-700 hover:to-amber-700 text-white rounded-xl text-lg font-semibold shadow-xl shadow-amber-500/20 transition-all hover:scale-105 active:scale-95"
-          >
-            Enter the Extended War Room
-          </button>
-        </div>
-      );
-    }
-
-    // SCENARIOS STEPS (1 to SCENARIOS.length)
-    if (step >= 1 && step <= SCENARIOS.length) {
-      const sIdx = step - 1;
-      const scenario = SCENARIOS[sIdx];
-      const result = scenarioResults[sIdx];
-      
-      const themeColors: Record<string, string> = {
-        red: "bg-red-100 text-red-600 border-red-200 hover:border-red-500 hover:bg-red-50 hover:text-red-900",
-        blue: "bg-blue-100 text-blue-600 border-blue-200 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-900",
-        fuchsia: "bg-fuchsia-100 text-fuchsia-600 border-fuchsia-200 hover:border-fuchsia-500 hover:bg-fuchsia-50 hover:text-fuchsia-900",
-        teal: "bg-teal-100 text-teal-600 border-teal-200 hover:border-teal-500 hover:bg-teal-50 hover:text-teal-900",
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        stream.getTracks().forEach(t => t.stop());
       };
-      
-      const headerColor = themeColors[scenario.color].split(' ')[0]; // just get the bg color
-      const textColor = themeColors[scenario.color].split(' ')[1]; // get text color
-      const interactiveColor = themeColors[scenario.color].split(' ').slice(2).join(' '); // get interactive colors
+      mr.start();
+      mediaRecorderRef.current = mr;
+      setRecording(true);
+      setRecTime(0);
+      setTranscript('');
+      setAudioBlob(null);
 
-      return (
-        <div className="py-8 max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <StepIndicator currentStep={step} />
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 border-b border-slate-200 p-6 flex items-center gap-4">
-              <div className={`w-12 h-12 ${headerColor} ${textColor} rounded-full flex items-center justify-center text-xl font-bold`}>
-                {scenario.icon}
+      // Start speech recognition for live transcript
+      if (recognitionRef.current) {
+        recognitionRef.current.onresult = (event: any) => {
+          let t = '';
+          for (let i = 0; i < event.results.length; i++) t += event.results[i][0].transcript;
+          setTranscript(t);
+        };
+        try { recognitionRef.current.start(); } catch {}
+      }
+    } catch (err) {
+      setError('Microphone access denied. Please allow microphone access.');
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    setRecording(false);
+  }, []);
+
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+
+  // ============================================
+  // HANDLERS
+  // ============================================
+  const handleSubmitIntroduction = async () => {
+    if (!introduction.trim() || introduction.trim().length < 20) {
+      setError('Please describe your business idea in at least 20 characters.');
+      return;
+    }
+    setError('');
+    setStage('LOADING_SCENARIO');
+    setLoading(true);
+    try {
+      const sc = await apiGenerateScenario(introduction, 1, '');
+      setScenario(sc);
+      setCurrentRound(1);
+      setStage('SCENARIO');
+    } catch (e: any) {
+      setError(e.message);
+      setStage('INTRODUCTION');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // User selects an option → trigger follow-up generation
+  const handleSelectOption = async (option: DemoScenarioOption) => {
+    if (!scenario) return;
+    setSelectedOption(option);
+    setError('');
+    setStage('LOADING_FOLLOWUP');
+    setLoading(true);
+    try {
+      const fu = await apiGenerateFollowup(
+        introduction, scenario.question,
+        option.text, option.feedback, currentRound
+      );
+      setFollowupScenario(fu);
+      setStage('FOLLOWUP_SCENARIO');
+    } catch (e: any) {
+      setError(e.message);
+      setStage('SCENARIO');
+      setSelectedOption(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitTextResponse = async () => {
+    if (!userResponse.trim()) { setError('Please write your response.'); return; }
+    if (!followupScenario || !scenario || !selectedOption) return;
+    setError('');
+    setStage('EVALUATING');
+    setLoading(true);
+    try {
+      // Build combined context for evaluation
+      const combinedQuestion = `Original scenario: ${scenario.question}\nUser chose: ${selectedOption.text}\nFollow-up challenge: ${followupScenario.question}`;
+      const ev = await apiEvaluateText(introduction, combinedQuestion, userResponse);
+      setCurrentEval(ev);
+      setStage('FEEDBACK');
+    } catch (e: any) {
+      setError(e.message);
+      setStage('FOLLOWUP_SCENARIO');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitVoiceResponse = async () => {
+    if (!audioBlob) { setError('Please record your response first.'); return; }
+    if (!followupScenario || !scenario || !selectedOption) return;
+    setError('');
+    setStage('EVALUATING');
+    setLoading(true);
+    try {
+      const combinedQuestion = `Original scenario: ${scenario.question}\nUser chose: ${selectedOption.text}\nFollow-up challenge: ${followupScenario.question}`;
+      const ev = await apiEvaluateVoice(introduction, combinedQuestion, audioBlob);
+      setCurrentEval(ev);
+      setUserResponse(ev.transcription || transcript || '[Voice response]');
+      setStage('FEEDBACK');
+    } catch (e: any) {
+      setError(e.message);
+      setStage('FOLLOWUP_SCENARIO');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleNextRound = async () => {
+    if (!scenario || !currentEval || !selectedOption || !followupScenario) return;
+
+    // Save result
+    const result: RoundResult = {
+      round: currentRound,
+      scenario,
+      selectedOption,
+      followupScenario,
+      userResponse,
+      responseMode,
+      evaluation: currentEval,
+    };
+    const newResults = [...results, result];
+    setResults(newResults);
+
+    if (currentRound >= TOTAL_ROUNDS) {
+      setStage('REPORT');
+      return;
+    }
+
+    // Generate next scenario
+    const nextRound = currentRound + 1;
+    setCurrentRound(nextRound);
+    setUserResponse('');
+    setCurrentEval(null);
+    setSelectedOption(null);
+    setFollowupScenario(null);
+    setAudioBlob(null);
+    setTranscript('');
+    setResponseMode('text');
+    setStage('LOADING_SCENARIO');
+    setLoading(true);
+
+    const prevSummary = newResults.map(r =>
+      `Round ${r.round}: ${r.scenario.context} | Chose: "${r.selectedOption.text}" | Follow-up: ${r.followupScenario.context}`
+    ).join('\n');
+    try {
+      const sc = await apiGenerateScenario(introduction, nextRound, prevSummary);
+      setScenario(sc);
+      setStage('SCENARIO');
+    } catch (e: any) {
+      setError(e.message);
+      setStage('SCENARIO');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestart = () => {
+    setStage('WELCOME');
+    setIntroduction('');
+    setCurrentRound(1);
+    setScenario(null);
+    setSelectedOption(null);
+    setFollowupScenario(null);
+    setUserResponse('');
+    setResults([]);
+    setCurrentEval(null);
+    setError('');
+    setAudioBlob(null);
+    setTranscript('');
+    setResponseMode('text');
+    window.scrollTo(0, 0);
+  };
+
+  // ============================================
+  // RENDER
+  // ============================================
+  const avgScore = results.length > 0 ? (results.reduce((a, r) => a + r.evaluation.score, 0) / results.length) : 0;
+
+  return (
+    <main className="min-h-screen text-white font-sans" style={{ fontFamily: 'var(--font-inter)' }}>
+      {/* HEADER */}
+      <header className="sticky top-0 z-50 flex justify-between items-center px-4 sm:px-6 py-3 border-b border-white/5" style={{ background: 'rgba(10,10,18,0.85)', backdropFilter: 'blur(16px)' }}>
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded-lg flex items-center justify-center text-white font-black text-xs shadow-lg" style={{ background: 'linear-gradient(135deg, #7c3aed, #f59e0b)' }}>KK</div>
+          <span className="font-bold text-sm tracking-tight hidden sm:block">War Room <span className="ml-2 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase" style={{ background: 'rgba(255,255,255,0.06)', color: '#9ca3af' }}>DEMO</span></span>
+        </div>
+        {stage !== 'WELCOME' && stage !== 'REPORT' && (
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-bold tracking-widest uppercase text-gray-500">
+              {stage === 'INTRODUCTION' ? 'YOUR IDEA' :
+               stage === 'LOADING_SCENARIO' || stage === 'LOADING_FOLLOWUP' || stage === 'EVALUATING' ? 'AI THINKING...' :
+               stage === 'SCENARIO' ? `ROUND ${currentRound} — CHOOSE` :
+               stage === 'FOLLOWUP_SCENARIO' ? `ROUND ${currentRound} — FOLLOW-UP` :
+               stage === 'FEEDBACK' ? 'AI FEEDBACK' : ''}
+            </span>
+          </div>
+        )}
+        {stage !== 'WELCOME' && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 hidden sm:block">{currentRound}/{TOTAL_ROUNDS}</span>
+          </div>
+        )}
+      </header>
+
+      {/* PROGRESS BAR */}
+      {stage !== 'WELCOME' && <StageProgressBar round={stage === 'REPORT' ? TOTAL_ROUNDS : currentRound - 1} total={TOTAL_ROUNDS} />}
+
+      {/* MAIN CONTENT */}
+      <div className="flex-1 min-h-[calc(100vh-53px)] px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-3xl mx-auto">
+
+          {/* ===================== WELCOME ===================== */}
+          {stage === 'WELCOME' && (
+            <div className="flex flex-col items-center justify-center min-h-[70vh] text-center max-w-3xl mx-auto animate-fade-in-up">
+              <div className="text-6xl mb-6 animate-float">⚔️</div>
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold tracking-widest uppercase mb-6" style={{ background: 'rgba(124,58,237,0.15)', color: '#a78bfa', border: '1px solid rgba(124,58,237,0.2)' }}>
+                <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" /> AI-Powered Demo
               </div>
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">{scenario.title}</h2>
-                <p className="text-slate-500">{scenario.tagline}</p>
-              </div>
-            </div>
-            <div className="p-8">
-              <p className="text-lg text-slate-800 leading-relaxed mb-8 flex gap-3">
-                <span className="text-2xl">&quot;</span>
-                {scenario.intro}
-                <span className="text-2xl">&quot;</span>
+              <h1 className="text-5xl sm:text-6xl font-black tracking-tight mb-4">
+                KK&apos;s <span className="bg-clip-text text-transparent animate-gradient" style={{ backgroundImage: 'linear-gradient(135deg, #7c3aed, #f59e0b, #ef4444, #7c3aed)' }}>War Room</span>
+              </h1>
+              <p className="text-xl text-gray-400 mb-4 leading-relaxed max-w-xl">
+                Describe your idea. Face AI-generated scenarios. Prove your founder instincts.
               </p>
-              
-              {result ? (
-                <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl animate-in zoom-in-95">
-                  <h3 className="font-semibold text-slate-900 mb-2">Outcome:</h3>
-                  <p className="text-slate-700 mb-6">{result}</p>
-                  <button 
-                    onClick={() => setStep(step + 1)} 
-                    className="w-full px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg transition-colors"
-                  >
-                    Proceed to Next Challenge ?
-                  </button>
+              <p className="text-sm text-gray-500 mb-10 max-w-lg">
+                In 3 rounds, our AI generates realistic challenges based on YOUR idea. Choose your strategy, face the follow-up consequences, and respond via text or voice.
+              </p>
+              <div className="flex flex-wrap gap-3 justify-center mb-10">
+                {['💡 Introduce', '🎯 Scenarios', '🔀 Follow-ups', '🎤 Voice/Text', '🤖 AI Feedback', '📊 Report'].map((s, i) => (
+                  <span key={i} className="px-3 py-1.5 rounded-lg text-xs font-medium glass-card-light">{s}</span>
+                ))}
+              </div>
+              <button onClick={() => setStage('INTRODUCTION')}
+                className="px-10 py-4 rounded-2xl text-lg font-bold text-white shadow-2xl transition-all hover:scale-105 active:scale-95 animate-glow"
+                style={{ background: 'linear-gradient(135deg, #7c3aed, #f59e0b)' }}>
+                Start the Demo
+              </button>
+            </div>
+          )}
+
+          {/* ===================== INTRODUCTION ===================== */}
+          {stage === 'INTRODUCTION' && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="💡" tag="INTRODUCTION" title="What are you building?"
+                subtitle="Describe your business idea, target customer, and the problem you're solving. The more detail you give, the more personalized your scenario questions will be." />
+
+              <div className="glass-card p-6 mb-6">
+                <textarea
+                  id="intro-textarea"
+                  value={introduction}
+                  onChange={e => setIntroduction(e.target.value)}
+                  placeholder="Example: I'm building an AI-powered tutoring platform for college students struggling with STEM subjects. The platform uses adaptive learning to identify knowledge gaps and provides personalized study plans. My target customers are university students aged 18-24 who spend $500+/year on tutoring..."
+                  className="demo-textarea"
+                  rows={6}
+                />
+                <div className="flex justify-between items-center mt-3">
+                  <span className="text-xs text-gray-500">{introduction.length} characters</span>
+                  <span className={`text-xs ${introduction.length >= 20 ? 'text-emerald-400' : 'text-gray-600'}`}>
+                    {introduction.length >= 20 ? '✓ Ready to go' : 'Minimum 20 characters'}
+                  </span>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Choose your sequence of action</p>
-                  {scenario.choices.map((choice, i) => (
-                    <button 
-                      key={i} 
-                      onClick={() => handleScenarioChoice(sIdx, choice.outcome)} 
-                      className={`w-full text-left p-5 border-2 border-slate-200 rounded-xl text-slate-700 transition-all duration-200 group ${interactiveColor}`}
+              </div>
+
+              {error && <div className="text-sm text-red-400 mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>{error}</div>}
+
+              <NextButton
+                onClick={handleSubmitIntroduction}
+                disabled={introduction.trim().length < 20}
+                label="Generate My Scenarios →"
+                loading={loading}
+              />
+            </div>
+          )}
+
+          {/* ===================== LOADING SCENARIO ===================== */}
+          {stage === 'LOADING_SCENARIO' && (
+            <div className="flex flex-col items-center justify-center min-h-[50vh] text-center animate-fade-in-up">
+              <div className="relative mb-8">
+                <div className="w-20 h-20 rounded-full border-4 border-violet-500/20 border-t-violet-500 animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center text-2xl">🤖</div>
+              </div>
+              <h3 className="text-xl font-bold mb-2">Generating Scenario {currentRound}...</h3>
+              <p className="text-gray-400 text-sm max-w-md">Our AI is analyzing your business idea and crafting a realistic challenge for you to tackle.</p>
+            </div>
+          )}
+
+          {/* ===================== SCENARIO — OPTION SELECTION ===================== */}
+          {stage === 'SCENARIO' && scenario && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🎯" tag={`ROUND ${currentRound} OF ${TOTAL_ROUNDS}`} title="Scenario Challenge"
+                subtitle={scenario.context} />
+
+              {/* Scenario Question */}
+              <div className="glass-card p-6 sm:p-8 mb-6" style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+                <div className="flex items-start gap-3 mb-4">
+                  <span className="text-2xl mt-0.5">⚠️</span>
+                  <p className="text-gray-200 leading-relaxed">{scenario.question}</p>
+                </div>
+              </div>
+
+              {/* Option Selection */}
+              <div className="mb-4">
+                <p className="text-xs font-bold tracking-widest uppercase text-gray-500 mb-4">Choose your strategy:</p>
+                <div className="option-grid">
+                  {scenario.options.map((opt, i) => (
+                    <button
+                      key={opt.id}
+                      id={`option-${opt.id}`}
+                      className="option-card"
+                      onClick={() => handleSelectOption(opt)}
+                      disabled={loading}
+                      style={{ animationDelay: `${i * 0.1}s` }}
                     >
-                      <div className="flex items-center justify-between">
-                        <span>{choice.text}</span>
-                        <span className="opacity-0 group-hover:opacity-100 transition-opacity font-medium">Select</span>
-                      </div>
+                      <div className="option-label">{opt.id}</div>
+                      <p className="option-text">{opt.text}</p>
+                      <div className="option-arrow">→</div>
                     </button>
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-    }
+              </div>
 
-    // PITCH STEP
-    if (step === SCENARIOS.length + 1) {
-      return (
-        <div className="py-8 max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <StepIndicator currentStep={step} />
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 border-b border-slate-200 p-6 flex items-center gap-4">
-              <div className="w-12 h-12 bg-violet-100 text-violet-600 rounded-full flex items-center justify-center text-xl">
-                ???
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">Voice Pitch</h2>
-                <p className="text-slate-500">Record your 60-second pitch</p>
-              </div>
+              {error && <div className="text-sm text-red-400 mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>{error}</div>}
             </div>
-            <div className="p-12 flex flex-col items-center text-center">
-              <p className="text-lg mb-8 text-slate-600 max-w-md">
-                You've survived the operational gauntlet. Now, you have 60 seconds to deliver your elevator pitch to the board. Focus on traction, team, and problem-solving.
-              </p>
-              
-              <div className="relative mb-10 mt-4">
-                {isRecording && (
-                  <div className="absolute -inset-4 bg-red-100 rounded-full animate-ping opacity-50"></div>
-                )}
-                <button 
-                  onClick={handleStartRecording}
-                  disabled={pitchRecorded || isRecording}
-                  className={`relative w-36 h-36 rounded-full flex items-center justify-center shadow-xl transition-all ${
-                    isRecording ? "bg-red-500 text-white scale-110" : 
-                    pitchRecorded ? "bg-green-500 text-white" : 
-                    "bg-slate-900 hover:bg-slate-800 text-white"
-                  }`}
-                >
-                  <span className="font-bold text-xl">
-                    {isRecording ? `00:0${recordingTime}` : pitchRecorded ? "Recorded" : "Record"}
-                  </span>
+          )}
+
+          {/* ===================== LOADING FOLLOW-UP ===================== */}
+          {stage === 'LOADING_FOLLOWUP' && selectedOption && (
+            <div className="flex flex-col items-center justify-center min-h-[50vh] text-center animate-fade-in-up">
+              <div className="relative mb-8">
+                <div className="w-20 h-20 rounded-full border-4 border-amber-500/20 border-t-amber-500 animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center text-2xl">🔀</div>
+              </div>
+              <h3 className="text-xl font-bold mb-2">Generating Follow-up...</h3>
+              <div className="glass-card p-4 mb-4 max-w-md" style={{ borderColor: 'rgba(124,58,237,0.2)' }}>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Your choice:</p>
+                <p className="text-sm text-gray-300">&quot;{selectedOption.text}&quot;</p>
+              </div>
+              <p className="text-gray-400 text-sm max-w-md">Our AI is exploring the consequences of your decision and crafting a deeper challenge...</p>
+            </div>
+          )}
+
+          {/* ===================== FOLLOW-UP SCENARIO ===================== */}
+          {stage === 'FOLLOWUP_SCENARIO' && followupScenario && selectedOption && scenario && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🔀" tag={`ROUND ${currentRound} — FOLLOW-UP`} title="Consequence Challenge"
+                subtitle={followupScenario.context} />
+
+              {/* Breadcrumb: What they chose */}
+              <div className="followup-breadcrumb mb-6">
+                <div className="breadcrumb-connector" />
+                <div className="breadcrumb-origin">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Original scenario</span>
+                  <p className="text-xs text-gray-400 mt-1 line-clamp-2">{scenario.question}</p>
+                </div>
+                <div className="breadcrumb-choice">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-violet-400">Your choice</span>
+                  <p className="text-sm text-violet-300 mt-1">&quot;{selectedOption.text}&quot;</p>
+                  <p className="text-xs text-amber-400/70 mt-1 italic">{selectedOption.feedback}</p>
+                </div>
+              </div>
+
+              {/* Follow-up Question */}
+              <div className="glass-card p-6 sm:p-8 mb-6" style={{ borderColor: 'rgba(6,182,212,0.3)' }}>
+                <div className="flex items-start gap-3 mb-2">
+                  <span className="text-2xl mt-0.5">🔀</span>
+                  <p className="text-gray-200 leading-relaxed">{followupScenario.question}</p>
+                </div>
+              </div>
+
+              {/* Response Mode Toggle */}
+              <div className="flex gap-2 mb-6">
+                <button
+                  onClick={() => { setResponseMode('text'); setAudioBlob(null); setTranscript(''); }}
+                  className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all"
+                  style={{
+                    background: responseMode === 'text' ? 'rgba(124,58,237,0.15)' : 'rgba(255,255,255,0.03)',
+                    border: `2px solid ${responseMode === 'text' ? '#7c3aed' : 'rgba(255,255,255,0.06)'}`,
+                    color: responseMode === 'text' ? '#a78bfa' : '#9ca3af',
+                  }}>
+                  ✏️ Type Response
+                </button>
+                <button
+                  onClick={() => { setResponseMode('voice'); setUserResponse(''); }}
+                  className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all"
+                  style={{
+                    background: responseMode === 'voice' ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.03)',
+                    border: `2px solid ${responseMode === 'voice' ? '#ef4444' : 'rgba(255,255,255,0.06)'}`,
+                    color: responseMode === 'voice' ? '#fca5a5' : '#9ca3af',
+                  }}>
+                  🎤 Voice Response
                 </button>
               </div>
 
-              {pitchRecorded && (
-                <button 
-                  onClick={() => setStep(step + 1)} 
-                  className="px-8 py-3 bg-violet-600 hover:bg-violet-700 text-white font-medium rounded-lg transition-colors shadow-md shadow-violet-500/20 animate-in fade-in"
-                >
-                  Enter Negotiation Room ?
-                </button>
+              {/* Text Response */}
+              {responseMode === 'text' && (
+                <div className="glass-card p-6 mb-4">
+                  <textarea
+                    id="response-textarea"
+                    value={userResponse}
+                    onChange={e => setUserResponse(e.target.value)}
+                    placeholder="Explain how you would handle this follow-up situation. Consider the trade-offs, short-term vs long-term impact, and what signals this sends to your team, customers, and investors..."
+                    className="demo-textarea"
+                    rows={5}
+                  />
+                </div>
               )}
-            </div>
-          </div>
-        </div>
-      );
-    }
 
-    // NEGOTIATION STEP
-    if (step === SCENARIOS.length + 2) {
-      return (
-        <div className="py-8 max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
-           <StepIndicator currentStep={step} />
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 border-b border-slate-200 p-6 flex items-center gap-4">
-              <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center text-xl">
-                ??
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">The Shark Tank</h2>
-                <p className="text-slate-500">Negotiate terms with the virtual investor</p>
-              </div>
+              {/* Voice Response */}
+              {responseMode === 'voice' && (
+                <div className="glass-card p-6 mb-4">
+                  <div className="flex flex-col items-center">
+                    {/* Mic Button */}
+                    <div className="relative mb-4">
+                      {recording && <div className="absolute -inset-6 rounded-full animate-pulse opacity-30" style={{ background: 'radial-gradient(circle, #ef4444, transparent)' }} />}
+                      <button
+                        onClick={recording ? stopRecording : startRecording}
+                        className="relative w-24 h-24 rounded-full flex items-center justify-center text-2xl font-bold shadow-2xl transition-all hover:scale-105"
+                        style={{ background: recording ? '#ef4444' : audioBlob ? '#10b981' : 'linear-gradient(135deg, #7c3aed, #3b82f6)' }}>
+                        {recording ? '⏹' : audioBlob ? '🔄' : '🎤'}
+                      </button>
+                    </div>
+
+                    {/* Waveform */}
+                    {recording && (
+                      <div className="flex justify-center gap-1 mb-3">
+                        {[...Array(7)].map((_, i) => <div key={i} className="waveform-bar" style={{ height: `${12 + Math.random() * 16}px` }} />)}
+                      </div>
+                    )}
+
+                    {/* Status */}
+                    <div className="text-center mb-3">
+                      {recording ? (
+                        <span className="text-sm text-red-400 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                          Recording... {formatTime(recTime)}
+                        </span>
+                      ) : audioBlob ? (
+                        <span className="text-sm text-emerald-400">✅ Recorded ({recTime}s) — tap 🔄 to re-record</span>
+                      ) : (
+                        <span className="text-sm text-gray-500">Tap the microphone to record your response</span>
+                      )}
+                    </div>
+
+                    {/* Transcript */}
+                    <div className="w-full p-4 rounded-xl min-h-[80px]" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <p className="text-xs text-gray-500 mb-2 font-bold uppercase tracking-widest">Live Transcript</p>
+                      <p className="text-sm text-gray-300">{transcript || (recording ? 'Listening...' : 'Your speech will appear here.')}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {error && <div className="text-sm text-red-400 mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>{error}</div>}
+
+              <NextButton
+                onClick={responseMode === 'text' ? handleSubmitTextResponse : handleSubmitVoiceResponse}
+                disabled={responseMode === 'text' ? !userResponse.trim() : !audioBlob}
+                label="Submit Response →"
+                loading={loading}
+              />
             </div>
-            <div className="p-8">
-              <div className="bg-slate-100 p-6 rounded-xl border border-slate-200 mb-8 relative">
-                <div className="absolute -top-3 -left-3 w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center text-white text-xs font-bold border-2 border-white shadow-sm">MC</div>
-                <p className="text-lg text-slate-800 font-medium italic">
-                  {INVESTOR_NEGOTIATION.intro}
+          )}
+
+          {/* ===================== EVALUATING ===================== */}
+          {stage === 'EVALUATING' && (
+            <div className="flex flex-col items-center justify-center min-h-[50vh] text-center animate-fade-in-up">
+              <div className="relative mb-8">
+                <div className="w-20 h-20 rounded-full border-4 border-amber-500/20 border-t-amber-500 animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center text-2xl">🧠</div>
+              </div>
+              <h3 className="text-xl font-bold mb-2">Evaluating Your Response...</h3>
+              <p className="text-gray-400 text-sm max-w-md">Our AI mentor is analyzing your strategic thinking, business acumen, and decision-making ability.</p>
+            </div>
+          )}
+
+          {/* ===================== FEEDBACK ===================== */}
+          {stage === 'FEEDBACK' && currentEval && scenario && selectedOption && followupScenario && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="📊" tag={`ROUND ${currentRound} FEEDBACK`} title="AI Evaluation"
+                subtitle={scenario.context} />
+
+              {/* Decision Path Summary */}
+              <div className="glass-card p-5 mb-6" style={{ borderColor: 'rgba(124,58,237,0.2)' }}>
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">🗺️ Your Decision Path</h4>
+                <div className="flex items-start gap-3 mb-2">
+                  <div className="decision-path-dot" style={{ background: '#7c3aed' }} />
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-gray-500">Option Chosen</p>
+                    <p className="text-sm text-gray-300">{selectedOption.text}</p>
+                  </div>
+                </div>
+                <div className="decision-path-line" />
+                <div className="flex items-start gap-3">
+                  <div className="decision-path-dot" style={{ background: '#06b6d4' }} />
+                  <div>
+                    <p className="text-[10px] font-bold uppercase text-gray-500">Follow-up Challenge</p>
+                    <p className="text-xs text-gray-400">{followupScenario.question}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Score */}
+              <div className="glass-card p-6 mb-6 text-center" style={{ borderColor: currentEval.score >= 7 ? 'rgba(16,185,129,0.3)' : currentEval.score >= 4 ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)' }}>
+                <div className="text-5xl font-black mb-2" style={{
+                  color: currentEval.score >= 7 ? '#10b981' : currentEval.score >= 4 ? '#f59e0b' : '#ef4444'
+                }}>
+                  {currentEval.score}<span className="text-lg text-gray-500">/10</span>
+                </div>
+                <p className="text-sm text-gray-400">
+                  {currentEval.score >= 8 ? 'Excellent strategic thinking!' : currentEval.score >= 6 ? 'Good response with room for growth.' : currentEval.score >= 4 ? 'Decent, but consider more angles.' : 'Needs significant improvement.'}
                 </p>
               </div>
 
-              {investorResult ? (
-                <div className="p-6 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl animate-in fade-in">
-                  <h3 className="font-bold text-green-900 mb-2">Final Outcome:</h3>
-                  <p className="text-green-800 font-medium mb-6">{investorResult}</p>
-                  <button 
-                    onClick={() => setStep(step + 1)} 
-                    className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
-                  >
-                    View Final Assessment Profile
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                   <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Your Negotiation Target</p>
-                  {INVESTOR_NEGOTIATION.choices.map((choice, i) => (
-                    <button 
-                      key={i} 
-                      onClick={() => setInvestorResult(choice.outcome)} 
-                      className="w-full text-left p-5 border-2 border-slate-200 rounded-xl hover:border-amber-500 hover:bg-amber-50 text-slate-700 hover:text-amber-900 transition-all duration-200 font-medium"
-                    >
-                       {choice.text}
-                    </button>
-                  ))}
+              {/* Voice-specific scores */}
+              {'clarity' in currentEval && (
+                <div className="glass-card p-5 mb-6 space-y-3">
+                  <h4 className="text-sm font-bold text-gray-300 mb-3">🎤 Voice Delivery</h4>
+                  <ScoreBar label="Clarity" value={(currentEval as DemoVoiceEvaluation).clarity} max={5} color="#3b82f6" />
+                  <ScoreBar label="Confidence" value={(currentEval as DemoVoiceEvaluation).confidence} max={5} color="#a855f7" />
+                  {'transcription' in currentEval && (currentEval as DemoVoiceEvaluation).transcription && (
+                    <div className="mt-4 p-3 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <p className="text-xs text-gray-500 mb-1 font-bold uppercase">What you said:</p>
+                      <p className="text-sm text-gray-300 italic">&quot;{(currentEval as DemoVoiceEvaluation).transcription}&quot;</p>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      );
-    }
 
-    // FINAL STEP
-    if (step === TOTAL_STEPS + 1) {
-      return (
-        <div className="py-16 max-w-4xl mx-auto text-center animate-in zoom-in-95 duration-500">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-6 ring-8 ring-green-50">
-            <span className="text-4xl">??</span>
-          </div>
-          <h2 className="text-4xl font-extrabold mb-4 text-slate-900">Simulation Complete</h2>
-          <p className="text-xl text-slate-600 mb-12">Here is your founder profile based on your sequence of decisions.</p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left mb-8">
-            {SCENARIOS.map((scenario, index) => (
-              <div key={index} className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100">
-                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                  <span className="opacity-75">{scenario.icon}</span> {scenario.title}
+              {/* Feedback */}
+              <div className="glass-card p-6 mb-6">
+                <h4 className="text-sm font-bold text-gray-300 mb-3">💬 AI Mentor Feedback</h4>
+                <p className="text-gray-300 leading-relaxed text-sm">{currentEval.feedback}</p>
+              </div>
+
+              {/* Strengths & Weaknesses */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                {currentEval.strengths && currentEval.strengths.length > 0 && (
+                  <div className="glass-card p-5" style={{ borderColor: 'rgba(16,185,129,0.2)' }}>
+                    <h4 className="text-sm font-bold text-emerald-400 mb-3">✅ Strengths</h4>
+                    <ul className="space-y-2">
+                      {currentEval.strengths.map((s, i) => (
+                        <li key={i} className="text-xs text-gray-300 flex items-start gap-2">
+                          <span className="text-emerald-400 mt-0.5">•</span>{s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {currentEval.weaknesses && currentEval.weaknesses.length > 0 && (
+                  <div className="glass-card p-5" style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+                    <h4 className="text-sm font-bold text-amber-400 mb-3">⚠️ Areas to Improve</h4>
+                    <ul className="space-y-2">
+                      {currentEval.weaknesses.map((w, i) => (
+                        <li key={i} className="text-xs text-gray-300 flex items-start gap-2">
+                          <span className="text-amber-400 mt-0.5">•</span>{w}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <NextButton
+                onClick={handleNextRound}
+                label={currentRound >= TOTAL_ROUNDS ? '📊 View Final Report →' : `Continue to Round ${currentRound + 1} →`}
+              />
+            </div>
+          )}
+
+          {/* ===================== REPORT ===================== */}
+          {stage === 'REPORT' && (
+            <div className="max-w-3xl mx-auto animate-fade-in-up pb-20">
+              <div className="text-center mb-12">
+                <div className="text-6xl mb-4">🏆</div>
+                <h2 className="text-4xl font-black mb-2">Demo Complete!</h2>
+                <p className="text-gray-400">Here&apos;s how you performed across {TOTAL_ROUNDS} AI-generated scenarios.</p>
+              </div>
+
+              {/* Overall Score */}
+              <div className="glass-card p-8 mb-6 text-center" style={{ borderColor: 'rgba(124,58,237,0.3)' }}>
+                <div className="text-sm text-gray-500 mb-2 font-bold uppercase tracking-widest">Average Score</div>
+                <div className="text-6xl font-black mb-2" style={{
+                  background: 'linear-gradient(135deg, #7c3aed, #f59e0b)',
+                  WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+                }}>
+                  {avgScore.toFixed(1)}<span className="text-2xl" style={{ WebkitTextFillColor: '#6b7280' }}>/10</span>
                 </div>
-                <div className="font-medium text-slate-800 text-sm leading-snug">{scenarioResults[index]}</div>
+                <p className="text-sm text-gray-400">
+                  {avgScore >= 8 ? 'Outstanding! You think like a seasoned founder.' : avgScore >= 6 ? 'Strong performance. Your instincts are solid.' : avgScore >= 4 ? 'Good effort. The War Room will sharpen these skills.' : 'Lots of room for growth — the full simulation will push you further.'}
+                </p>
               </div>
-            ))}
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
-            <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100">
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                <span className="opacity-75">???</span> Pitch Delivery
+              {/* Round-by-Round Results */}
+              <div className="space-y-4 mb-8">
+                {results.map((r, i) => (
+                  <div key={i} className="glass-card p-6 stagger-children">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <span className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style={{
+                          background: r.evaluation.score >= 7 ? 'rgba(16,185,129,0.2)' : r.evaluation.score >= 4 ? 'rgba(245,158,11,0.2)' : 'rgba(239,68,68,0.2)',
+                          color: r.evaluation.score >= 7 ? '#10b981' : r.evaluation.score >= 4 ? '#f59e0b' : '#ef4444',
+                        }}>R{r.round}</span>
+                        <div>
+                          <h4 className="text-sm font-bold text-gray-200">Round {r.round}</h4>
+                          <p className="text-xs text-gray-500">{r.scenario.context} • {r.responseMode === 'voice' ? '🎤 Voice' : '✏️ Text'}</p>
+                        </div>
+                      </div>
+                      <div className="text-xl font-black" style={{
+                        color: r.evaluation.score >= 7 ? '#10b981' : r.evaluation.score >= 4 ? '#f59e0b' : '#ef4444',
+                      }}>{r.evaluation.score}/10</div>
+                    </div>
+                    {/* Decision path in report */}
+                    <div className="report-decision-path mb-3">
+                      <div className="flex items-start gap-2 mb-1">
+                        <span className="text-violet-400 text-xs mt-0.5">▸</span>
+                        <p className="text-xs text-violet-300">Chose: &quot;{r.selectedOption.text}&quot;</p>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-cyan-400 text-xs mt-0.5">▸</span>
+                        <p className="text-xs text-cyan-300/80">Follow-up: {r.followupScenario.context}</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400 leading-relaxed">{r.evaluation.feedback}</p>
+                  </div>
+                ))}
               </div>
-              <div className="font-medium text-slate-800 text-sm leading-snug">Pitch successfully recorded. Confident and clear delivery detected by simulated analysis metrics.</div>
-            </div>
-            <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 rounded-2xl shadow-lg border border-amber-200/50">
-              <div className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2 flex items-center gap-2">
-                <span className="opacity-75">??</span> Deal Outcome
-              </div>
-              <div className="font-medium text-slate-900 text-sm leading-snug">{investorResult}</div>
-            </div>
-          </div>
-          
-          <button 
-            onClick={() => {
-              setStep(0);
-              setScenarioResults(Array(SCENARIOS.length).fill(""));
-              setInvestorResult("");
-              setPitchRecorded(false);
-              setTimeLeft(15 * 60);
-              window.scrollTo(0,0);
-            }} 
-            className="mt-16 px-10 py-4 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition shadow-xl font-bold text-lg"
-          >
-            Restart The Gauntlet
-          </button>
-        </div>
-      );
-    }
 
-    return null;
-  };
-
-  return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-violet-200">
-      <header className="sticky top-0 z-50 flex justify-between items-center p-4 sm:px-8 border-b border-slate-200 bg-white/80 backdrop-blur-md">
-        <div className="flex items-center gap-3 w-1/3">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-600 to-amber-500 flex items-center justify-center text-white font-bold shadow-md">
-            KK
-          </div>
-          <span className="font-bold text-lg tracking-tight hidden sm:block">War Room <span className="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded ml-2 border border-slate-300 font-medium">EXTENDED DEMO</span></span>
-        </div>
-        
-        {step > 0 && step < TOTAL_STEPS + 1 && (
-          <div className="flex items-center justify-center w-1/3">
-             <div className="bg-violet-100 text-violet-800 font-semibold px-3 py-1 rounded-full text-xs uppercase tracking-widest hidden sm:block">
-               Phase {step} of {TOTAL_STEPS}
-             </div>
-          </div>
-        )}
-
-        <div className="flex justify-end w-1/3">
-          {step > 0 && step < TOTAL_STEPS + 1 && (
-            <div className="flex items-center gap-3 bg-red-50 text-red-700 px-4 py-1.5 rounded-full border border-red-200 font-medium shadow-sm">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-              <div className="font-mono text-sm font-bold">
-                {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, "0")}
+              {/* CTA */}
+              <div className="glass-card p-8 text-center" style={{ borderColor: 'rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.05)' }}>
+                <h3 className="text-xl font-bold mb-3">Ready for the full experience?</h3>
+                <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
+                  The complete War Room simulation includes investor panels, team management, financial crises, pitch sessions, and AI-powered negotiation — all personalized to your business.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <button onClick={handleRestart}
+                    className="px-8 py-3 rounded-xl border-2 border-white/10 text-gray-300 hover:text-white hover:border-white/20 transition font-semibold">
+                    🔄 Try Again
+                  </button>
+                  <button className="px-8 py-3 rounded-xl font-bold text-white transition hover:scale-105"
+                    style={{ background: 'linear-gradient(135deg, #7c3aed, #f59e0b)' }}>
+                    🚀 Start Full Simulation
+                  </button>
+                </div>
               </div>
             </div>
           )}
-        </div>
-      </header>
-      
-      <div className="min-h-[calc(100vh-73px)] pb-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
-          {currentStepView()}
+
         </div>
       </div>
     </main>
