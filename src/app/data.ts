@@ -11,6 +11,12 @@ export type DemoStage =
   | 'FOLLOWUP_SCENARIO'
   | 'EVALUATING'
   | 'FEEDBACK'
+  | 'PITCH_INTRO'
+  | 'PITCHING'
+  | 'PITCH_FEEDBACK'
+  | 'NEGOTIATION_INTRO'
+  | 'NEGOTIATION'
+  | 'NEGOTIATION_FEEDBACK'
   | 'REPORT';
 
 export interface DemoScenarioOption {

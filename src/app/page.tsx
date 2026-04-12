@@ -53,6 +53,26 @@ async function apiEvaluateVoice(introduction: string, question: string, audio: B
   return res.json();
 }
 
+async function apiGeneratePitch(introduction: string): Promise<{ question: string; context: string }> {
+  const res = await fetch(`${API_BASE}/demo/generate-pitch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ introduction }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to generate pitch'); }
+  return res.json();
+}
+
+async function apiGenerateNegotiation(introduction: string, pitchResponse: string): Promise<{ question: string; context: string }> {
+  const res = await fetch(`${API_BASE}/demo/generate-negotiation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ introduction, pitchResponse }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to generate negotiation'); }
+  return res.json();
+}
+
 // ============================================
 // SHARED UI
 // ============================================
@@ -119,6 +139,10 @@ export default function DemoPage() {
   const [responseMode, setResponseMode] = useState<'text' | 'voice'>('text');
   const [results, setResults] = useState<RoundResult[]>([]);
   const [currentEval, setCurrentEval] = useState<DemoEvaluation | DemoVoiceEvaluation | null>(null);
+  const [pitchEval, setPitchEval] = useState<DemoVoiceEvaluation | null>(null);
+  const [negEval, setNegEval] = useState<DemoEvaluation | null>(null);
+  const [pitchData, setPitchData] = useState<{ question: string; context: string } | null>(null);
+  const [negData, setNegData] = useState<{ question: string; context: string } | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -298,7 +322,7 @@ export default function DemoPage() {
     setResults(newResults);
 
     if (currentRound >= TOTAL_ROUNDS) {
-      setStage('REPORT');
+      setStage('PITCH_INTRO');
       return;
     }
 
@@ -340,6 +364,10 @@ export default function DemoPage() {
     setUserResponse('');
     setResults([]);
     setCurrentEval(null);
+    setPitchEval(null);
+    setNegEval(null);
+    setPitchData(null);
+    setNegData(null);
     setError('');
     setAudioBlob(null);
     setTranscript('');
@@ -347,10 +375,74 @@ export default function DemoPage() {
     window.scrollTo(0, 0);
   };
 
+  const handleStartPitch = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiGeneratePitch(introduction);
+      setPitchData(data);
+      setResponseMode('voice');
+      setStage('PITCHING');
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitPitch = async () => {
+    if (!audioBlob || !pitchData) return;
+    setLoading(true);
+    setError('');
+    try {
+      const ev = await apiEvaluateVoice(introduction, pitchData.question, audioBlob);
+      setPitchEval(ev);
+      // We also save transcription for the next step
+      setUserResponse(ev.transcription);
+      setStage('PITCH_FEEDBACK');
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStartNegotiation = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiGenerateNegotiation(introduction, userResponse); // userResponse is the pitch transcription
+      setNegData(data);
+      setResponseMode('text');
+      setUserResponse('');
+      setStage('NEGOTIATION');
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitNegotiation = async () => {
+    if (!userResponse.trim() || !negData) return;
+    setLoading(true);
+    setError('');
+    try {
+      const ev = await apiEvaluateText(introduction, negData.question, userResponse);
+      setNegEval(ev);
+      setStage('NEGOTIATION_FEEDBACK');
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ============================================
   // RENDER
   // ============================================
   const avgScore = results.length > 0 ? (results.reduce((a, r) => a + r.evaluation.score, 0) / results.length) : 0;
+  const finalTotalScore = (results.reduce((a, r) => a + r.evaluation.score, 0) + (pitchEval?.score || 0) + (negEval?.score || 0)) / (results.length + (pitchEval ? 1 : 0) + (negEval ? 1 : 0));
 
   return (
     <main className="min-h-screen text-white font-sans" style={{ fontFamily: 'var(--font-inter)' }}>
@@ -367,19 +459,31 @@ export default function DemoPage() {
                stage === 'LOADING_SCENARIO' || stage === 'LOADING_FOLLOWUP' || stage === 'EVALUATING' ? 'AI THINKING...' :
                stage === 'SCENARIO' ? `ROUND ${currentRound} — CHOOSE` :
                stage === 'FOLLOWUP_SCENARIO' ? `ROUND ${currentRound} — FOLLOW-UP` :
+               stage === 'PITCH_INTRO' || stage === 'PITCHING' || stage === 'PITCH_FEEDBACK' ? 'PITCH PHASE' :
+               stage === 'NEGOTIATION_INTRO' || stage === 'NEGOTIATION' || stage === 'NEGOTIATION_FEEDBACK' ? 'NEGOTIATION PHASE' :
                stage === 'FEEDBACK' ? 'AI FEEDBACK' : ''}
             </span>
           </div>
         )}
         {stage !== 'WELCOME' && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 hidden sm:block">{currentRound}/{TOTAL_ROUNDS}</span>
+            <span className="text-xs text-gray-500 hidden sm:block">
+              {stage === 'PITCH_INTRO' || stage === 'PITCHING' || stage === 'PITCH_FEEDBACK' ? '4/5' :
+               stage === 'NEGOTIATION_INTRO' || stage === 'NEGOTIATION' || stage === 'NEGOTIATION_FEEDBACK' ? '5/5' :
+               stage === 'REPORT' ? '5/5' : `${currentRound}/5`}
+            </span>
           </div>
         )}
       </header>
 
       {/* PROGRESS BAR */}
-      {stage !== 'WELCOME' && <StageProgressBar round={stage === 'REPORT' ? TOTAL_ROUNDS : currentRound - 1} total={TOTAL_ROUNDS} />}
+      {stage !== 'WELCOME' && <StageProgressBar 
+        round={stage === 'REPORT' ? 5 : 
+               (stage === 'NEGOTIATION_INTRO' || stage === 'NEGOTIATION' || stage === 'NEGOTIATION_FEEDBACK') ? 4 :
+               (stage === 'PITCH_INTRO' || stage === 'PITCHING' || stage === 'PITCH_FEEDBACK') ? 3 :
+               currentRound - 1} 
+        total={5} 
+      />}
 
       {/* MAIN CONTENT */}
       <div className="flex-1 min-h-[calc(100vh-53px)] px-4 sm:px-6 lg:px-8 py-8">
@@ -738,8 +842,168 @@ export default function DemoPage() {
 
               <NextButton
                 onClick={handleNextRound}
-                label={currentRound >= TOTAL_ROUNDS ? '📊 View Final Report →' : `Continue to Round ${currentRound + 1} →`}
+                label={currentRound >= TOTAL_ROUNDS ? '🎤 Prepare Your Pitch →' : `Continue to Round ${currentRound + 1} →`}
               />
+            </div>
+          )}
+
+          {/* ===================== PITCH INTRO ===================== */}
+          {stage === 'PITCH_INTRO' && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🎤" tag="PHASE 4 OF 5" title="Elevator Pitch" 
+                subtitle="Now that you've handled several challenges, it's time to pitch your business to a potential investor. You'll have to record a 60-second voice pitch." />
+              
+              <div className="glass-card p-6 mb-8 text-gray-300 leading-relaxed">
+                <p className="mb-4">Investors want to see clarity, confidence, and a strong value proposition. Based on your business idea and the decisions you&apos;ve made so far, our AI will challenge you with a specific pitching environment.</p>
+                <ul className="space-y-2 text-sm text-gray-400">
+                  <li>• Focus on the problem you solve</li>
+                  <li>• Mention your unique advantage</li>
+                  <li>• Keep it under 60 seconds</li>
+                </ul>
+              </div>
+
+              <NextButton onClick={handleStartPitch} label="Generate Pitch Scenario →" loading={loading} />
+            </div>
+          )}
+
+          {/* ===================== PITCHING ===================== */}
+          {stage === 'PITCHING' && pitchData && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🎤" tag="PHASE 4" title="Investor Pitch" subtitle={pitchData.context} />
+
+              <div className="glass-card p-6 sm:p-8 mb-6" style={{ borderColor: 'rgba(59,130,246,0.3)' }}>
+                <div className="flex items-start gap-3 mb-4">
+                  <span className="text-2xl mt-0.5">💬</span>
+                  <p className="text-gray-200 leading-relaxed font-medium text-lg">{pitchData.question}</p>
+                </div>
+              </div>
+
+              <div className="glass-card p-6 mb-6">
+                <div className="flex flex-col items-center">
+                  <div className="relative mb-4">
+                    {recording && <div className="absolute -inset-6 rounded-full animate-pulse opacity-30" style={{ background: 'radial-gradient(circle, #ef4444, transparent)' }} />}
+                    <button
+                      onClick={recording ? stopRecording : startRecording}
+                      className="relative w-24 h-24 rounded-full flex items-center justify-center text-2xl font-bold shadow-2xl transition-all hover:scale-105"
+                      style={{ background: recording ? '#ef4444' : audioBlob ? '#10b981' : 'linear-gradient(135deg, #3b82f6, #7c3aed)' }}>
+                      {recording ? '⏹' : audioBlob ? '🔄' : '🎤'}
+                    </button>
+                  </div>
+
+                  {recording && (
+                    <div className="flex justify-center gap-1 mb-3">
+                      {[...Array(7)].map((_, i) => <div key={i} className="waveform-bar" style={{ height: `${12 + Math.random() * 16}px` }} />)}
+                    </div>
+                  )}
+
+                  <div className="text-center mb-4">
+                    {recording ? (
+                      <span className="text-sm text-red-400 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        Recording Pitch... {formatTime(recTime)}
+                      </span>
+                    ) : audioBlob ? (
+                      <span className="text-sm text-emerald-400">✅ Pitch Recorded — ready for evaluation</span>
+                    ) : (
+                      <span className="text-sm text-gray-500">Tap to record your elevator pitch (max 60s)</span>
+                    )}
+                  </div>
+
+                  <div className="w-full p-4 rounded-xl min-h-[80px]" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p className="text-xs text-gray-400">{transcript || 'Your pitch transcription will appear here...'}</p>
+                  </div>
+                </div>
+              </div>
+
+              <NextButton onClick={handleSubmitPitch} disabled={!audioBlob} label="Evaluate Pitch →" loading={loading} />
+            </div>
+          )}
+
+          {/* ===================== PITCH FEEDBACK ===================== */}
+          {stage === 'PITCH_FEEDBACK' && pitchEval && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="📊" tag="PITCH FEEDBACK" title="Pitch Evaluation" />
+
+              <div className="glass-card p-8 mb-6 text-center" style={{ borderColor: 'rgba(59,130,246,0.3)' }}>
+                <div className="text-5xl font-black mb-2 text-blue-400">{pitchEval.score}<span className="text-lg text-gray-500">/10</span></div>
+                <p className="text-sm text-gray-400">Investor Impression</p>
+              </div>
+
+              <div className="glass-card p-5 mb-6 space-y-3">
+                <ScoreBar label="Clarity" value={pitchEval.clarity} max={5} color="#3b82f6" />
+                <ScoreBar label="Confidence" value={pitchEval.confidence} max={5} color="#a855f7" />
+              </div>
+
+              <div className="glass-card p-6 mb-6">
+                <h4 className="text-sm font-bold text-gray-300 mb-3">💬 Feedback</h4>
+                <p className="text-gray-300 text-sm leading-relaxed">{pitchEval.feedback}</p>
+              </div>
+
+              <NextButton onClick={() => setStage('NEGOTIATION_INTRO')} label="Final Phase: Negotiation →" />
+            </div>
+          )}
+
+          {/* ===================== NEGOTIATION INTRO ===================== */}
+          {stage === 'NEGOTIATION_INTRO' && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🤝" tag="PHASE 5 OF 5" title="Deal Negotiation" 
+                subtitle="The investor is interested, but the terms aren't perfect. You need to negotiate the final deal." />
+
+              <div className="glass-card p-6 mb-8 text-gray-300 leading-relaxed">
+                <p className="mb-4">This is the final test of the demo. You&apos;ll be presented with a deal offer (valuation, equity, and conditions). You must respond with your counter-offer or reasoning to close the deal.</p>
+                <ul className="space-y-2 text-sm text-gray-400">
+                  <li>• Protect your equity but secure the capital</li>
+                  <li>• Justify your valuation based on your vision</li>
+                  <li>• Show you can be a pragmatist when needed</li>
+                </ul>
+              </div>
+
+              <NextButton onClick={handleStartNegotiation} label="Start Negotiation →" loading={loading} />
+            </div>
+          )}
+
+          {/* ===================== NEGOTIATION ===================== */}
+          {stage === 'NEGOTIATION' && negData && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🤝" tag="FINAL PHASE" title="Negotiation" subtitle={negData.context} />
+
+              <div className="glass-card p-6 sm:p-8 mb-6" style={{ borderColor: 'rgba(236,72,153,0.3)' }}>
+                <div className="flex items-start gap-3 mb-4">
+                  <span className="text-2xl mt-0.5">💰</span>
+                  <p className="text-gray-200 leading-relaxed font-semibold italic">{negData.question}</p>
+                </div>
+              </div>
+
+              <div className="glass-card p-6 mb-6">
+                <textarea
+                  value={userResponse}
+                  onChange={e => setUserResponse(e.target.value)}
+                  placeholder="Draft your negotiation response... (e.g., 'I appreciate the offer, but I'd like to propose a $5M valuation due to our recent growth...')"
+                  className="demo-textarea"
+                  rows={5}
+                />
+              </div>
+
+              <NextButton onClick={handleSubmitNegotiation} disabled={!userResponse.trim()} label="Submit Final Deal →" loading={loading} />
+            </div>
+          )}
+
+          {/* ===================== NEGOTIATION FEEDBACK ===================== */}
+          {stage === 'NEGOTIATION_FEEDBACK' && negEval && (
+            <div className="max-w-2xl mx-auto animate-fade-in-up">
+              <PhaseHeader icon="🤝" tag="NEGOTIATION RESULT" title="The Deal Outcome" />
+
+              <div className="glass-card p-8 mb-6 text-center" style={{ borderColor: 'rgba(236,72,153,0.3)' }}>
+                <div className="text-5xl font-black mb-2 text-pink-400">{negEval.score}<span className="text-lg text-gray-500">/10</span></div>
+                <p className="text-sm text-gray-400">Negotiation Effectiveness</p>
+              </div>
+
+              <div className="glass-card p-6 mb-6">
+                <h4 className="text-sm font-bold text-gray-300 mb-3">💬 Investor Reaction</h4>
+                <p className="text-gray-300 text-sm leading-relaxed">{negEval.feedback}</p>
+              </div>
+
+              <NextButton onClick={() => setStage('REPORT')} label="🏁 View Final War Room Report →" />
             </div>
           )}
 
@@ -749,63 +1013,67 @@ export default function DemoPage() {
               <div className="text-center mb-12">
                 <div className="text-6xl mb-4">🏆</div>
                 <h2 className="text-4xl font-black mb-2">Demo Complete!</h2>
-                <p className="text-gray-400">Here&apos;s how you performed across {TOTAL_ROUNDS} AI-generated scenarios.</p>
+                <p className="text-gray-400">Here&apos;s how you performed across the full War Room Demo.</p>
               </div>
 
               {/* Overall Score */}
-              <div className="glass-card p-8 mb-6 text-center" style={{ borderColor: 'rgba(124,58,237,0.3)' }}>
-                <div className="text-sm text-gray-500 mb-2 font-bold uppercase tracking-widest">Average Score</div>
-                <div className="text-6xl font-black mb-2" style={{
+              <div className="glass-card p-8 mb-8 text-center" style={{ borderColor: 'rgba(124,58,237,0.3)' }}>
+                <div className="text-sm text-gray-500 mb-2 font-bold uppercase tracking-widest">Aggregate Founder Score</div>
+                <div className="text-7xl font-black mb-2" style={{
                   background: 'linear-gradient(135deg, #7c3aed, #f59e0b)',
                   WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                 }}>
-                  {avgScore.toFixed(1)}<span className="text-2xl" style={{ WebkitTextFillColor: '#6b7280' }}>/10</span>
+                  {finalTotalScore.toFixed(1)}<span className="text-2xl" style={{ WebkitTextFillColor: '#6b7280' }}>/10</span>
                 </div>
                 <p className="text-sm text-gray-400">
-                  {avgScore >= 8 ? 'Outstanding! You think like a seasoned founder.' : avgScore >= 6 ? 'Strong performance. Your instincts are solid.' : avgScore >= 4 ? 'Good effort. The War Room will sharpen these skills.' : 'Lots of room for growth — the full simulation will push you further.'}
+                  {finalTotalScore >= 8 ? 'Outstanding! You think like a seasoned founder.' : finalTotalScore >= 6 ? 'Strong performance. Your instincts are solid.' : finalTotalScore >= 4 ? 'Good effort. The War Room will sharpen these skills.' : 'Lots of growth room — the full simulation will push you further.'}
                 </p>
               </div>
 
-              {/* Round-by-Round Results */}
-              <div className="space-y-4 mb-8">
-                {results.map((r, i) => (
-                  <div key={i} className="glass-card p-6 stagger-children">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <span className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style={{
-                          background: r.evaluation.score >= 7 ? 'rgba(16,185,129,0.2)' : r.evaluation.score >= 4 ? 'rgba(245,158,11,0.2)' : 'rgba(239,68,68,0.2)',
-                          color: r.evaluation.score >= 7 ? '#10b981' : r.evaluation.score >= 4 ? '#f59e0b' : '#ef4444',
-                        }}>R{r.round}</span>
-                        <div>
-                          <h4 className="text-sm font-bold text-gray-200">Round {r.round}</h4>
-                          <p className="text-xs text-gray-500">{r.scenario.context} • {r.responseMode === 'voice' ? '🎤 Voice' : '✏️ Text'}</p>
-                        </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                {/* Scenario Rounds */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Tactical Decisions</h3>
+                  {results.slice(0, 3).map((r, i) => (
+                    <div key={i} className="glass-card p-5">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs font-bold text-gray-400 uppercase">Round {r.round}</span>
+                        <span className="text-sm font-bold font-mono" style={{ color: r.evaluation.score >= 7 ? '#10b981' : '#f59e0b' }}>{r.evaluation.score}/10</span>
                       </div>
-                      <div className="text-xl font-black" style={{
-                        color: r.evaluation.score >= 7 ? '#10b981' : r.evaluation.score >= 4 ? '#f59e0b' : '#ef4444',
-                      }}>{r.evaluation.score}/10</div>
+                      <p className="text-xs text-gray-500 line-clamp-2">{r.scenario.context}</p>
                     </div>
-                    {/* Decision path in report */}
-                    <div className="report-decision-path mb-3">
-                      <div className="flex items-start gap-2 mb-1">
-                        <span className="text-violet-400 text-xs mt-0.5">▸</span>
-                        <p className="text-xs text-violet-300">Chose: &quot;{r.selectedOption.text}&quot;</p>
+                  ))}
+                </div>
+
+                {/* Strategic Skills */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Strategic Skills</h3>
+                  {pitchEval && (
+                    <div className="glass-card p-5">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs font-bold text-blue-400 uppercase">Elevator Pitch</span>
+                        <span className="text-sm font-bold font-mono text-blue-400">{pitchEval.score}/10</span>
                       </div>
-                      <div className="flex items-start gap-2">
-                        <span className="text-cyan-400 text-xs mt-0.5">▸</span>
-                        <p className="text-xs text-cyan-300/80">Follow-up: {r.followupScenario.context}</p>
-                      </div>
+                      <p className="text-xs text-gray-500">Communication & Delivery</p>
                     </div>
-                    <p className="text-xs text-gray-400 leading-relaxed">{r.evaluation.feedback}</p>
-                  </div>
-                ))}
+                  )}
+                  {negEval && (
+                    <div className="glass-card p-5">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs font-bold text-pink-400 uppercase">Negotiation</span>
+                        <span className="text-sm font-bold font-mono text-pink-400">{negEval.score}/10</span>
+                      </div>
+                      <p className="text-xs text-gray-500">Deal-making & Pragmatism</p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* CTA */}
               <div className="glass-card p-8 text-center" style={{ borderColor: 'rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.05)' }}>
                 <h3 className="text-xl font-bold mb-3">Ready for the full experience?</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  The complete War Room simulation includes investor panels, team management, financial crises, pitch sessions, and AI-powered negotiation — all personalized to your business.
+                  The complete War Room simulation includes investor panels, team management, financial crises, and deep AI-powered analytics — all personalized to your startup.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
                   <button onClick={handleRestart}
