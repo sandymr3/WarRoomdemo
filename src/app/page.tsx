@@ -323,6 +323,7 @@ export default function DemoPage() {
 
     if (currentRound >= TOTAL_ROUNDS) {
       setStage('PITCH_INTRO');
+      window.scrollTo(0, 0); // Add scroll to top here
       return;
     }
 
@@ -378,6 +379,7 @@ export default function DemoPage() {
   const handleStartPitch = async () => {
     setLoading(true);
     setError('');
+    window.scrollTo(0, 0);
     try {
       const data = await apiGeneratePitch(introduction);
       setPitchData(data);
@@ -898,14 +900,28 @@ export default function DemoPage() {
 
                   <div className="text-center mb-4">
                     {recording ? (
-                      <span className="text-sm text-red-400 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                        Recording Pitch... {formatTime(recTime)}
-                      </span>
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-sm text-red-400 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                          Recording Pitch... {formatTime(recTime)}
+                        </span>
+                        {recTime < 10 && (
+                          <span className="text-[10px] text-amber-500/80 animate-pulse">
+                            Keep speaking! Minimum 10 seconds required for AI analysis.
+                          </span>
+                        )}
+                      </div>
                     ) : audioBlob ? (
-                      <span className="text-sm text-emerald-400">✅ Pitch Recorded — ready for evaluation</span>
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-sm text-emerald-400">✅ Pitch Recorded — {recTime}s</span>
+                        {recTime < 10 && (
+                          <span className="text-[10px] text-red-400 font-bold">
+                            ⚠️ Pitch too short! Please record at least 10 seconds.
+                          </span>
+                        )}
+                      </div>
                     ) : (
-                      <span className="text-sm text-gray-500">Tap to record your elevator pitch (max 60s)</span>
+                      <span className="text-sm text-gray-500">Tap to record (10s minimum, 60s max)</span>
                     )}
                   </div>
 
@@ -915,7 +931,12 @@ export default function DemoPage() {
                 </div>
               </div>
 
-              <NextButton onClick={handleSubmitPitch} disabled={!audioBlob} label="Evaluate Pitch →" loading={loading} />
+              <NextButton 
+                onClick={handleSubmitPitch} 
+                disabled={!audioBlob || recTime < 10} 
+                label={recTime < 10 ? "Record 10s+ to continue" : "Evaluate Pitch →"} 
+                loading={loading} 
+              />
             </div>
           )}
 
