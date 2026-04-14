@@ -14,9 +14,12 @@ export type DemoStage =
   | 'PITCH_INTRO'
   | 'PITCHING'
   | 'PITCH_FEEDBACK'
+  | 'PITCH_QNA'
+  | 'PITCH_QNA_FEEDBACK'
   | 'NEGOTIATION_INTRO'
   | 'NEGOTIATION'
   | 'NEGOTIATION_FEEDBACK'
+  | 'LOADING_REPORT'
   | 'REPORT';
 
 export interface DemoScenarioOption {
@@ -61,3 +64,14 @@ export interface RoundResult {
 
 // Backend API base URL
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+
+export interface CompetencyScore {
+  trait: string;
+  score: number;
+}
+
+export interface CompetencyReport {
+  overallScore: number;
+  summary: string;
+  competencies: CompetencyScore[];
+}
