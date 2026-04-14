@@ -919,7 +919,7 @@ export default function DemoPage() {
                     )}
 
                     {/* Status */}
-                    <div className="text-center mb-3">
+                    <div className="text-center mb-4">
                       {recording ? (
                         <span className="text-sm text-red-400 flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -930,6 +930,14 @@ export default function DemoPage() {
                       ) : (
                         <span className="text-sm text-gray-500">Tap the microphone to record your response</span>
                       )}
+                    </div>
+
+                    {/* Voice Duration Warning */}
+                    <div className="w-full p-3 rounded-lg mb-4" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)' }}>
+                      <p className="text-xs text-amber-300 font-semibold flex items-start gap-2">
+                        <span>⏱️</span>
+                        <span><strong>Important:</strong> Please speak for at least 15 seconds for AI to properly detect and analyze your voice.</span>
+                      </p>
                     </div>
 
                     {/* Transcript */}
@@ -1162,23 +1170,23 @@ export default function DemoPage() {
                             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                             Recording Pitch... {formatTime(recTime)}
                           </span>
-                          {recTime < 10 && (
+                          {recTime < 15 && (
                             <span className="text-[10px] text-amber-500/80 animate-pulse">
-                              Keep speaking! Minimum 10 seconds required for AI analysis.
+                              Keep speaking! Minimum 15 seconds required for AI analysis.
                             </span>
                           )}
                         </div>
                       ) : audioBlob ? (
                         <div className="flex flex-col items-center gap-1">
                           <span className="text-sm text-emerald-400">✅ Pitch Recorded — {recTime}s</span>
-                          {recTime < 10 && (
+                          {recTime < 15 && (
                             <span className="text-[10px] text-red-400 font-bold">
-                              ⚠️ Pitch too short! Please record at least 10 seconds.
+                              ⚠️ Pitch too short! Please record at least 15 seconds.
                             </span>
                           )}
                         </div>
                       ) : (
-                        <span className="text-sm text-gray-500">Tap to record (10s minimum, 60s max)</span>
+                        <span className="text-sm text-gray-500">Tap to record (15s minimum, 60s max)</span>
                       )}
                     </div>
 
@@ -1193,8 +1201,8 @@ export default function DemoPage() {
 
               <NextButton 
                 onClick={responseMode === 'text' ? handleSubmitPitchText : handleSubmitPitchVoice} 
-                disabled={responseMode === 'text' ? userResponse.trim().length < 50 : (!audioBlob || recTime < 10)} 
-                label={responseMode === 'text' ? 'Evaluate Pitch →' : (recTime < 10 ? 'Record 10s+ to continue' : 'Evaluate Pitch →')} 
+                disabled={responseMode === 'text' ? userResponse.trim().length < 50 : (!audioBlob || recTime < 15)} 
+                label={responseMode === 'text' ? 'Evaluate Pitch →' : (recTime < 15 ? 'Record 15s+ to continue' : 'Evaluate Pitch →')} 
                 loading={loading} 
               />
             </div>
@@ -1293,6 +1301,14 @@ export default function DemoPage() {
                       ) : (
                         <span className="text-sm text-gray-500">Tap to record your answer</span>
                       )}
+                    </div>
+
+                    {/* Voice Duration Warning */}
+                    <div className="w-full p-3 rounded-lg mt-4" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)' }}>
+                      <p className="text-xs text-amber-300 font-semibold flex items-start gap-2">
+                        <span>⏱️</span>
+                        <span><strong>Important:</strong> Please speak for at least 15 seconds for AI to properly detect and analyze your voice.</span>
+                      </p>
                     </div>
                   </div>
                 </div>
