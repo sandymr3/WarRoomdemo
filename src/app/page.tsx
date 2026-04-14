@@ -603,25 +603,16 @@ export default function DemoPage() {
       return;
     }
 
+    // For round 2, reuse the same offer to finalize it
     const nextRound = negotiationRound + 1;
     setNegotiationRound(nextRound);
-    setLoading(true);
     setError('');
-    const prevContext = `Offer: ${negData?.question}\nCounter: ${userResponse}`;
-    
-    try {
-      const pitchContext = pitchEval?.transcription || introduction;
-      const data = await apiGenerateNegotiation(introduction, pitchContext, nextRound, prevContext);
-      setNegData(data);
-      setResponseMode('text');
-      setUserResponse('');
-      setStage('NEGOTIATION');
-      window.scrollTo(0, 0);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+    // Keep the same negData (same offer) for finalization
+    setResponseMode('text');
+    setUserResponse('');
+    setNegEval(null);
+    setStage('NEGOTIATION');
+    window.scrollTo(0, 0);
   };
 
   const handleGenerateReport = async () => {
@@ -1368,7 +1359,7 @@ export default function DemoPage() {
           {/* ===================== NEGOTIATION ===================== */}
           {stage === 'NEGOTIATION' && negData && (
             <div className="max-w-2xl mx-auto animate-fade-in-up">
-              <PhaseHeader icon="🤝" tag={`NEGOTIATION ROUND ${negotiationRound}/2`} title="The Deal" subtitle={negData.context} />
+              <PhaseHeader icon="🤝" tag={`NEGOTIATION ROUND ${negotiationRound}/2 ${negotiationRound === 2 ? '- FINALIZE' : ''}`} title="The Deal" subtitle={negData.context} />
 
               <div className="glass-card p-6 sm:p-8 mb-6" style={{ borderColor: 'rgba(236,72,153,0.3)' }}>
                 <div className="flex items-start gap-3 mb-4">
@@ -1389,7 +1380,7 @@ export default function DemoPage() {
 
               {error && <div className="text-sm text-red-400 mb-4 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>{error}</div>}
 
-              <NextButton onClick={handleSubmitNegotiation} disabled={!userResponse.trim()} label="Submit Final Deal →" loading={loading} />
+              <NextButton onClick={handleSubmitNegotiation} disabled={!userResponse.trim()} label={negotiationRound === 2 ? "Finalize Deal →" : "Submit Counter-Offer →"} loading={loading} />
             </div>
           )}
 
@@ -1408,7 +1399,7 @@ export default function DemoPage() {
                 <p className="text-gray-300 text-sm leading-relaxed">{negEval.feedback}</p>
               </div>
 
-              <NextButton onClick={handleNextNegotiation} label={negotiationRound >= 2 ? "🏁 Generatng Report..." : "Next Round of Negotiation →"} loading={loading} />
+              <NextButton onClick={handleNextNegotiation} label={negotiationRound >= 2 ? "🏁 Generating Report..." : "Renegotiate to Finalize →"} loading={loading} />
             </div>
           )}
 
