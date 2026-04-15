@@ -1438,6 +1438,19 @@ export default function DemoPage() {
                 </p>
               </div>
 
+              {reportData && reportData.entrepreneurType && (
+                <div className="text-center mb-10 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
+                  <div className="inline-block px-8 py-3 rounded-xl text-2xl font-black mb-3 shadow-lg shadow-indigo-500/20"
+                    style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white' }}>
+                    {reportData.entrepreneurType}
+                  </div>
+                  <p className="text-gray-400 text-base mb-4">Organizational Role: <strong className="text-violet-300">{reportData.organizationalRole}</strong></p>
+                  {reportData.archetypeNarrative && (
+                    <p className="text-gray-300 leading-relaxed max-w-2xl mx-auto text-sm">{reportData.archetypeNarrative}</p>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
                 {/* Scenario Rounds */}
                 <div className="space-y-4">
@@ -1451,17 +1464,6 @@ export default function DemoPage() {
                       <p className="text-xs text-gray-500 line-clamp-2">{r.scenario.context}</p>
                     </div>
                   ))}
-                  
-                  {reportData?.competencies && (
-                    <div className="glass-card p-5 mt-4" style={{ borderColor: 'rgba(124,58,237,0.2)' }}>
-                      <h4 className="text-sm font-bold text-violet-400 mb-4">Competency Breakdown</h4>
-                      <div className="space-y-3">
-                        {reportData.competencies.map((comp: any, i: number) => (
-                          <ScoreBar key={i} label={comp.trait} value={comp.score} max={10} color="#a855f7" />
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* Strategic Skills */}
@@ -1486,6 +1488,81 @@ export default function DemoPage() {
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* FULL COMPETENCY PROFILE */}
+              {reportData?.competencies && (
+                <div className="glass-card p-6 sm:p-8 mb-8" style={{ borderColor: 'rgba(124,58,237,0.2)' }}>
+                  <h4 className="text-base font-bold text-violet-400 mb-6 uppercase tracking-widest">Detailed Competency Profile</h4>
+                  <div className="space-y-4">
+                    {reportData.competencies.map((comp: any, i: number) => {
+                      const getCatColor = (cat: string) => {
+                        switch (cat) {
+                          case 'NATURAL_DOMINANT': return { bg: 'rgba(16,185,129,0.12)', text: '#34d399' };
+                          case 'STRONG': return { bg: 'rgba(59,130,246,0.12)', text: '#60a5fa' };
+                          case 'FUNCTIONAL': return { bg: 'rgba(245,158,11,0.12)', text: '#fbbf24' };
+                          case 'DEVELOPMENT_REQUIRED': return { bg: 'rgba(239,68,68,0.12)', text: '#fca5a5' };
+                          case 'HIGH_RISK': return { bg: 'rgba(239,68,68,0.2)', text: '#ef4444' };
+                          default: return { bg: 'rgba(139,92,246,0.15)', text: '#c4b5fd' };
+                        }
+                      };
+                      const catCols = getCatColor(comp.category);
+                      const barColor = comp.score >= 8 ? '#10b981' : comp.score >= 6 ? '#3b82f6' : comp.score >= 4 ? '#f59e0b' : '#ef4444';
+                      
+                      return (
+                        <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full">
+                          <div className="flex items-center gap-3 w-full sm:w-56 shrink-0">
+                            <span className="font-black text-sm w-7 shrink-0" style={{ color: barColor }}>{comp.code || `C${i+1}`}</span>
+                            <span className="text-sm text-gray-300 truncate">{comp.trait}</span>
+                          </div>
+                          <div className="flex-1 h-3 rounded-full bg-white/5 relative">
+                            <div className="absolute top-0 left-0 h-full rounded-full transition-all duration-1000" style={{ width: `${(comp.score / 10) * 100}%`, background: barColor }} />
+                          </div>
+                          <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-40 shrink-0">
+                            <span className="text-sm font-mono font-bold" style={{ color: barColor }}>{comp.score}/10</span>
+                            {comp.category && (
+                              <span className="text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap uppercase tracking-wider" style={{ background: catCols.bg, color: catCols.text }}>
+                                {comp.category.replace(/_/g, ' ')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
+                {reportData?.roleFitMap && (
+                  <div className="glass-card p-6" style={{ borderColor: 'rgba(6,182,212,0.2)' }}>
+                    <h4 className="text-sm font-bold text-cyan-400 mb-3 uppercase tracking-widest">Role Fit Analysis</h4>
+                    <p className="text-xl font-black text-white mb-2">{reportData.roleFitMap.role}</p>
+                    <p className="text-sm text-gray-400 mb-4">{reportData.roleFitMap.bestEnvironment}</p>
+                    {reportData.roleFitMap.dominantCompetencies && reportData.roleFitMap.dominantCompetencies.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {reportData.roleFitMap.dominantCompetencies.map((c: string, i: number) => (
+                          <span key={i} className="text-[10px] font-bold uppercase tracking-wider border border-white/10 text-cyan-300 px-2 py-1 rounded-md">{c}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {reportData?.actionPlan && reportData.actionPlan.length > 0 && (
+                  <div className="glass-card p-6" style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+                    <h4 className="text-sm font-bold text-amber-400 mb-4 uppercase tracking-widest">Action Plan</h4>
+                    <div className="space-y-3">
+                      {reportData.actionPlan.map((item: any, i: number) => (
+                        <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                          <div className="font-bold text-amber-500 text-xs mb-1 uppercase">{item.competency}</div>
+                          <p className="text-gray-300 text-sm mb-2">{item.action}</p>
+                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider px-2 py-0.5 rounded bg-black/20">{item.targetDate}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* CTA */}

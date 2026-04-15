@@ -65,13 +65,32 @@ export interface RoundResult {
 // Backend API base URL
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 
+export interface DemoActionItem {
+  competency: string;
+  action: string;
+  targetDate: string;
+}
+
+export interface DemoRoleFitMap {
+  role: string;
+  bestEnvironment: string;
+  dominantCompetencies: string[];
+}
+
 export interface CompetencyScore {
+  code: string;
   trait: string;
   score: number;
+  category: string;
 }
 
 export interface CompetencyReport {
   overallScore: number;
   summary: string;
+  entrepreneurType: string;
+  organizationalRole: string;
+  archetypeNarrative: string;
   competencies: CompetencyScore[];
+  roleFitMap: DemoRoleFitMap;
+  actionPlan: DemoActionItem[];
 }
